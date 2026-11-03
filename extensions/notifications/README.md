@@ -10,7 +10,9 @@ are on for this device.” even while the app is on screen, and reports the push
 Questions from any local conversation notify, titled by the asking branch or “Ultimate”. One-way messages notify
 only when @ultimate sends them to the user. @ultimate's answers to internal inputs do not notify. Its failed runs
 and every landing notify too. Previews are limited to about 180 characters; opening a notification opens the relevant
-conversation on the origin that subscribed. Notification previews can appear on the device's lock screen.
+conversation on the origin that subscribed, a question's at the question while it is open
+(`/?conversation=<c>&message=<m>`, see [Messages](../messages/README.md)). Notification previews can appear on the
+device's lock screen.
 
 An on-screen device gets no automatic push: each page reports itself every 10 seconds while shown and once when it
 hides, and a visible report less than 15 seconds old from any page of that browser suppresses sending (its tabs share

@@ -3,7 +3,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
-import { api, cn, defineWebExtension, errorMessage, useDocOf, useUltimate } from '@/sdk'
+import { api, cn, defineWebExtension, errorMessage, events, useDocOf, useUltimate } from '@/sdk'
 import { MessagesDoc } from '../messages/ui.tsx'
 import { KeyAction, PresentAction, SubscribeAction, TestAction, UnsubscribeAction } from './refs.ts'
 import type { Device, Kind, PushSubscriptionJson } from './refs.ts'
@@ -92,7 +92,7 @@ const page = Math.random().toString(36).slice(2)
 /**
  * Always mounted, renders nothing: registers the service worker, keeps the app badge at the questions waiting on the
  * user and closes the notifications of those answered, reports while a subscribed page is on screen, and opens the
- * conversation of a tapped notification.
+ * conversation of a tapped notification, at its question when it asks one.
  */
 function Pusher() {
   const { registration, device } = useHere()
@@ -152,8 +152,13 @@ function Pusher() {
     if (!('serviceWorker' in navigator)) return undefined
     const opened = (event: MessageEvent<{ type?: string; url?: string }>) => {
       if (event.data?.type !== 'notifications:open' || !event.data.url) return
-      const id = Number(new URL(event.data.url, location.href).searchParams.get('conversation'))
+      const url = new URL(event.data.url, location.href)
+      const id = Number(url.searchParams.get('conversation'))
       if (!Number.isInteger(id) || id <= 0) return
+      // The link's `message`, as on load (the messages extension): it reveals the question if it is still open.
+      const message = Number(url.searchParams.get('message'))
+      if (url.searchParams.has('message') && Number.isSafeInteger(message))
+        events.emit('messages:open', { conversation: id, message })
       showSurface('agent')
       switchConversation(id)
     }

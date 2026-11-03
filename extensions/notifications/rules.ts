@@ -16,7 +16,7 @@ export function firstLine(text: string) {
 }
 const body = (text: string) => (text.length > 180 ? `${text.slice(0, 179)}…` : text)
 
-/** Questions from any local conversation; one-way news only from @ultimate. */
+/** Questions from any local conversation, opening at the question; one-way news only from @ultimate. */
 export function messageNotification(
   message: Pick<Message, 'id' | 'from' | 'to' | 'reply' | 'text' | 'questions'>,
   ultimate: number | undefined,
@@ -28,7 +28,7 @@ export function messageNotification(
     kind: message.reply ? 'input' : 'finished',
     title: message.from === ultimate ? 'Ultimate' : title || `#${message.from}`,
     body: body(message.questions?.[0]?.text ?? firstLine(message.text)),
-    path: `/?conversation=${message.from}`,
+    path: `/?conversation=${message.from}${message.reply ? `&message=${message.id}` : ''}`,
     tag: `message:${message.id}`,
   }
 }

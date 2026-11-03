@@ -85,12 +85,12 @@ describe('notification rules', () => {
     questions: [{ text: 'Which layout?', kind: 'choice' as const }],
   }
 
-  it('names a branch question by its title and previews its first question', () => {
+  it('names a branch question by its title, previews its first question and opens at it', () => {
     expect(messageNotification(question, 2, 'A quieter sidebar')).toEqual({
       kind: 'input',
       title: 'A quieter sidebar',
       body: 'Which layout?',
-      path: '/?conversation=8',
+      path: '/?conversation=8&message=75',
       tag: 'message:75',
     })
   })
@@ -100,7 +100,7 @@ describe('notification rules', () => {
       kind: 'input',
       title: 'Ultimate',
       body: 'Which layout?',
-      path: '/?conversation=2',
+      path: '/?conversation=2&message=75',
       tag: 'message:75',
     })
   })
