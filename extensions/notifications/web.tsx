@@ -86,6 +86,8 @@ function badge(count: number) {
 
 /** How often a shown page tells the server it is on screen; the server skips a device seen within 15 s. */
 const presentMs = 10_000
+/** This page load among the browser's tabs, which share one subscription. */
+const page = Math.random().toString(36).slice(2)
 
 /**
  * Always mounted, renders nothing: registers the service worker, keeps the app badge at the questions waiting on the
@@ -127,7 +129,7 @@ function Pusher() {
     if (!endpoint) return undefined
     const report = (visible: boolean) => {
       api
-        .action(PresentAction, { endpoint, visible }, { keepalive: !visible })
+        .action(PresentAction, { endpoint, page, visible }, { keepalive: !visible })
         // A missed report costs one push or one skipped push at worst; the next one corrects it.
         .catch((error: unknown) => console.warn('Notifications presence', error))
     }
@@ -206,8 +208,11 @@ function turnOn(registration: ServiceWorkerRegistration, key: string) {
 /** Unsubscribes this browser and drops its device on the server. */
 async function turnOff() {
   const { subscription, device } = here
-  update({ subscription: undefined, device: undefined, error: undefined })
+  update({ error: undefined })
+  // The browser's subscription goes first and stays on screen until it is gone: once it is, the push service answers
+  // 404/410 and the server drops the device even if removing it below fails.
   await subscription?.unsubscribe()
+  update({ subscription: undefined, device: undefined })
   if (device) await api.action(UnsubscribeAction, { endpoint: device.endpoint })
 }
 

@@ -35,7 +35,8 @@ const Devices = defineDoc<{ devices: StoredDevice[] }>({
 
 const state = (host: ExtensionHost) =>
   host.resource('notifications.state', () => ({
-    presence: new Map<string, { visible: boolean; at: number }>(),
+    /** Per endpoint, when each of its pages last reported itself on screen; a hidden page is dropped. */
+    presence: new Map<string, Map<string, number>>(),
     seen: new Set<string>(),
     sending: new Set<Promise<void>>(),
     vapid: new Map() as VapidCache,
@@ -114,8 +115,8 @@ async function deliver(host: ExtensionHost, notification: Notification) {
   await Promise.all(
     (await devices(host)).map(async (device) => {
       if (!device.kinds.includes(notification.kind)) return
-      const present = shared.presence.get(device.endpoint)
-      if (present?.visible && Date.now() - present.at < 15_000) return
+      const pages = shared.presence.get(device.endpoint)?.values() ?? []
+      if ([...pages].some((at) => Date.now() - at < 15_000)) return
       try {
         await sendDevice(host, device, notification)
       } catch (error) {
@@ -256,7 +257,9 @@ export default function notifications(host: ExtensionHost) {
     stop?.()
     stop = undefined
     await checking
-    await Promise.all(shared.sending)
+    // A reactor finishing during release may launch one more send: drain until none is left. One launched after
+    // storage closed is lost; notifications are at most once.
+    while (shared.sending.size) await Promise.all(shared.sending)
   }
   host.onRelease(close)
   host.onClose(close)
@@ -326,11 +329,21 @@ export const actions = {
   }),
   present: implementAction(PresentAction, (args, { host }) => {
     if (!args || typeof args !== 'object' || Array.isArray(args))
-      throw new Error('Expected { endpoint, visible }')
+      throw new Error('Expected { endpoint, page, visible }')
     assertEndpoint(args.endpoint)
+    if (typeof args.page !== 'string' || !args.page || args.page.length > 64)
+      throw new Error('Expected a page id of at most 64 characters')
     if (typeof args.visible !== 'boolean')
-      throw new Error('Expected { endpoint, visible: boolean }')
-    state(host).presence.set(args.endpoint, { visible: args.visible, at: Date.now() })
+      throw new Error('Expected { endpoint, page, visible: boolean }')
+    const { presence } = state(host)
+    const pages = presence.get(args.endpoint) ?? new Map<string, number>()
+    // Another tab of the same browser shares the endpoint: one hiding leaves the others on screen.
+    const now = Date.now()
+    for (const [page, at] of pages) if (now - at >= 15_000) pages.delete(page)
+    if (args.visible) pages.set(args.page, now)
+    else pages.delete(args.page)
+    if (pages.size) presence.set(args.endpoint, pages)
+    else presence.delete(args.endpoint)
     return null
   }),
 }

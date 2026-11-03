@@ -12,8 +12,9 @@ only when @ultimate sends them to the user. @ultimate's answers to internal inpu
 and every landing notify too. Previews are limited to about 180 characters; opening a notification opens the relevant
 conversation on the origin that subscribed. Notification previews can appear on the device's lock screen.
 
-An on-screen device gets no automatic push: the page reports visibility every 10 seconds, and a visible report
-less than 15 seconds old suppresses sending. Other devices still receive it. There is no silent badge-only push.
+An on-screen device gets no automatic push: each page reports itself every 10 seconds while shown and once when it
+hides, and a visible report less than 15 seconds old from any page of that browser suppresses sending (its tabs share
+one subscription). Other devices still receive it. There is no silent badge-only push.
 
 ## Badge and platforms
 
@@ -61,4 +62,4 @@ there is no retry loop. A push accepted by the service does not guarantee the OS
 
 All actions are user-only: `key` returns `{ key }`; `subscribe` takes `{ subscription, origin, kinds? }` and returns
 the device without encryption keys; `unsubscribe` takes `{ endpoint }` and returns `{ removed }`; `test` takes
-`{ endpoint }` and returns `{ status }`; `present` takes `{ endpoint, visible }` and returns `null`.
+`{ endpoint }` and returns `{ status }`; `present` takes `{ endpoint, page, visible }` and returns `null`.

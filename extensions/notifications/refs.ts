@@ -44,10 +44,11 @@ export const TestAction = actionRef<{ endpoint: string }, { status: number }>(
   'test',
 )
 /**
- * `{ endpoint, visible }` → `null`: that device's page is on screen (sent when it shows and every 10 s while shown) or
- * hidden. A device reported on screen within the last 15 s gets no push. User-only.
+ * `{ endpoint, page, visible }` → `null`: page `page` (one id per page load) of that device is on screen (sent when it
+ * shows and every 10 s while shown) or hidden. A device with any page reported on screen within the last 15 s gets no
+ * push. User-only.
  */
-export const PresentAction = actionRef<{ endpoint: string; visible: boolean }, null>(
+export const PresentAction = actionRef<{ endpoint: string; page: string; visible: boolean }, null>(
   'notifications',
   'present',
 )
