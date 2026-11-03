@@ -1,4 +1,48 @@
 Web Push notifications bring questions, @ultimate's finished answers and failed runs, and landings to each device, with an app-icon badge counting questions waiting on the user.
+Or, with `notifications.forward` set, the same notifications go to a webhook instead, such as a hub that pushes for
+several projects at once.
+
+## Forwarding to a webhook
+
+Set `notifications.forward` in the user settings (`~/.ultimate/settings.json`) and every project on the machine POSTs
+each notification there as JSON, instead of pushing to its own devices:
+
+```json
+{
+  "notifications": {
+    "forward": {
+      "url": "http://127.0.0.1:8080/api/notify",
+      "headers": { "Authorization": "Bearer ${MY_HUB_TOKEN}" }
+    }
+  }
+}
+```
+
+`${NAME}` in a header value is the environment variable `NAME`, else the secret `NAME` from the Secrets panel (⌘K →
+Secrets); never write a token inline. A missing one fails that send with its name. The body is
+
+```json
+{
+  "project": "my-app-1a2b3c4d",
+  "kind": "input",
+  "title": "A quieter sidebar",
+  "body": "Which layout?",
+  "conversation": 8,
+  "message": 75,
+  "tag": "message:75"
+}
+```
+
+`project` is the project's home folder name under `~/.ultimate/projects`, unique on the machine. `kind` is `input`,
+`finished`, `failed` or `landed`; `title`, `body` and `tag` are the notification's, chosen by the rules below.
+`conversation` is the conversation a tap should open, and `message`, only on a question, the question's id there: the
+page opens at it with `/?conversation=<conversation>&message=<message>`. Each notification is sent once, with no retry
+and no on-screen check: the receiver decides who is told. A non-2xx answer reports a notice with its status only, a
+failed request with its network code (`ECONNREFUSED`) or error name, never a header value.
+
+While forwarding, the page has no push of its own: no bell, no service worker registration, no app badge, and no
+`WEB_PUSH_VAPID_KEY` is created. Devices subscribed earlier keep their subscriptions but receive nothing until the
+setting is removed. The setting is read at each send; the page asks once per load (`mode`).
 
 ## The bell
 
@@ -62,6 +106,7 @@ sending runs outside reactor transactions. HTTP 404 or 410 removes the subscript
 a notice with the device label, status and first 200 response-body characters. Network failures also report a notice;
 there is no retry loop. A push accepted by the service does not guarantee the OS displayed it.
 
-All actions are user-only: `key` returns `{ key }`; `subscribe` takes `{ subscription, origin, kinds? }` and returns
-the device without encryption keys; `unsubscribe` takes `{ endpoint }` and returns `{ removed }`; `test` takes
-`{ endpoint }` and returns `{ status }`; `present` takes `{ endpoint, page, visible }` and returns `null`.
+`mode` returns `{ forward }`, whether the settings forward notifications. The other actions are user-only: `key`
+returns `{ key }`; `subscribe` takes `{ subscription, origin, kinds? }` and returns the device without encryption
+keys; `unsubscribe` takes `{ endpoint }` and returns `{ removed }`; `test` takes `{ endpoint }` and returns
+`{ status }`; `present` takes `{ endpoint, page, visible }` and returns `null`.

@@ -35,6 +35,8 @@ for example `{ "laptop": { "my-app": "https://laptop.tail1234.ts.net:4747" } }`:
 must be in its `tailscale.allow`). A project running on this machine answers here first unless another machine is
 named; a project listed on several machines needs a `machine`. Cloud backups' register is asked only for projects
 `remotes` does not name (`lib/remote.ts`).
+`notifications.forward` (user settings only, `{ url, headers? }`) sends every project's notifications to that webhook
+instead of Web Push to its own devices, and hides the bell; see `extensions/notifications/README.md`.
 Compaction thresholds come from Pi's settings (`~/.pi/agent/settings.json`, then `<project>/.pi/settings.json`,
 key `compaction`: `enabled`, `reserveTokens`, `keepRecentTokens`) over Pi Durable's defaults (reserve 16k, keep 20k,
 background compaction 32k below the blocking threshold), which suit a ~200k window. `server/harness.ts`

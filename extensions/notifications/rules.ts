@@ -3,7 +3,16 @@ import type { OverviewRow } from '../conversations/types.ts'
 import type { LandedData } from '../workspaces/api.ts'
 import type { Kind } from './refs.ts'
 
-export type Notification = { kind: Kind; title: string; body: string; path: string; tag: string }
+export type Notification = {
+  kind: Kind
+  title: string
+  body: string
+  path: string
+  tag: string
+  /** The conversation `path` opens, and the question it opens at. */
+  conversation: number
+  message?: number
+}
 
 /** A short plain-text preview, not the whole answer on the lock screen. */
 export function firstLine(text: string) {
@@ -25,6 +34,8 @@ export function messageNotification(
   if (message.to !== 'user' || typeof message.from !== 'number') return undefined
   if (!message.reply && message.from !== ultimate) return undefined
   return {
+    conversation: message.from,
+    ...(message.reply ? { message: message.id } : {}),
     kind: message.reply ? 'input' : 'finished',
     title: message.from === ultimate ? 'Ultimate' : title || `#${message.from}`,
     body: body(message.questions?.[0]?.text ?? firstLine(message.text)),
@@ -37,6 +48,7 @@ export function landingNotification(
   landing: Pick<LandedData, 'title' | 'conversationId' | 'sha'>,
 ): Notification {
   return {
+    conversation: landing.conversationId,
     kind: 'landed',
     title: 'Landed',
     body: body(landing.title),
@@ -54,6 +66,7 @@ export function rowNotification(
   const path = `/?conversation=${ultimate}`
   if (row?.runState === 'error' && row.inputId !== undefined)
     return {
+      conversation: ultimate,
       kind: 'failed',
       title: 'Ultimate',
       body: 'Stopped with an error.',
@@ -62,6 +75,7 @@ export function rowNotification(
     }
   if (row?.runState === 'answered' && row.answerId !== undefined && !row.internalInput)
     return {
+      conversation: ultimate,
       kind: 'finished',
       title: 'Ultimate',
       body: body(firstLine(answer)),
