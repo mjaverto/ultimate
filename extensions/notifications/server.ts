@@ -14,7 +14,7 @@ import { KeyAction, PresentAction, SubscribeAction, TestAction, UnsubscribeActio
 import type { Device, Kind, PushSubscriptionJson } from './refs.ts'
 import { publicKey, sendPush } from './push.ts'
 import type { VapidCache } from './push.ts'
-import { landingNotification, messageNotification, rowNotification } from './rules.ts'
+import { firstLine, landingNotification, messageNotification, rowNotification } from './rules.ts'
 import type { Notification } from './rules.ts'
 
 const KEY = 'WEB_PUSH_VAPID_KEY'
@@ -205,8 +205,12 @@ export default function notifications(host: ExtensionHost) {
     if (!notification || (!seed && shared.seen.has(notification.tag))) return
     shared.seen.add(notification.tag)
     if (seed) return
-    if (notification.kind === 'finished')
-      notification = rowNotification(row, ultimate, await answerText(host, row!.answerId!))!
+    if (notification.kind === 'finished') {
+      const answer = await answerText(host, row!.answerId!)
+      // A run that ends by messaging the user answers with no text; that message notifies on its own.
+      if (!firstLine(answer)) return
+      notification = rowNotification(row, ultimate, answer)!
+    }
     if (opened) launch(host, notification)
   }
   const schedule = () => {
