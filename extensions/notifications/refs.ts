@@ -5,8 +5,7 @@
 import { actionRef } from '../../shared/extension-api.ts'
 
 /** What a push is about: a question waiting on the user, @ultimate's finished answer, its failed run, a landing. */
-export const KINDS = ['input', 'finished', 'failed', 'landed'] as const
-export type Kind = (typeof KINDS)[number]
+export type Kind = 'input' | 'finished' | 'failed' | 'landed'
 
 /** A browser's push subscription, as `PushSubscription.toJSON()` gives it. */
 export type PushSubscriptionJson = { endpoint: string; keys: { p256dh: string; auth: string } }
