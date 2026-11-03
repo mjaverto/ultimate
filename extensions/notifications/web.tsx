@@ -5,7 +5,14 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch'
 import { api, cn, defineWebExtension, errorMessage, useDocOf, useUltimate } from '@/sdk'
 import { MessagesDoc } from '../messages/ui.tsx'
-import { KeyAction, PresentAction, SubscribeAction, TestAction, UnsubscribeAction } from './refs.ts'
+import {
+  KeyAction,
+  ModeAction,
+  PresentAction,
+  SubscribeAction,
+  TestAction,
+  UnsubscribeAction,
+} from './refs.ts'
 import type { Device, Kind, PushSubscriptionJson } from './refs.ts'
 
 /** Each kind of push, in the order and words of the sounds' cues. */
@@ -18,6 +25,8 @@ const kinds: { kind: Kind; label: string }[] = [
 
 /** What this browser has: its service worker, its push subscription and the device the server keeps for it. */
 type Here = {
+  /** Notifications go to a webhook instead (`notifications.forward`): this page has no push. Unknown until asked. */
+  forward?: boolean
   registration?: ServiceWorkerRegistration
   subscription?: PushSubscription
   /** Set once the server confirmed the subscription: this device is on. */
@@ -51,15 +60,19 @@ const failed = (error: unknown) => update({ error: errorMessage(error) })
 let launched = false
 
 /**
- * Registers the service worker and, when this browser is subscribed with permission granted, sends its subscription
- * again: iOS never reports a changed one, so every launch refreshes it on the server, which answers with the device.
+ * Unless notifications are forwarded, registers the service worker and, when this browser is subscribed with
+ * permission granted, sends its subscription again: iOS never reports a changed one, so every launch refreshes it on
+ * the server, which answers with the device.
  */
 function launch() {
-  if (launched || !('serviceWorker' in navigator)) return
+  if (launched) return
   launched = true
-  navigator.serviceWorker
-    .register('/sw.js')
-    .then(async (registration) => {
+  api
+    .action(ModeAction, null)
+    .then(async ({ forward }) => {
+      update({ forward })
+      if (forward || !('serviceWorker' in navigator)) return
+      const registration = await navigator.serviceWorker.register('/sw.js')
       update({ registration })
       // A Safari tab on iOS has a service worker but no push.
       if (!('PushManager' in window)) return
@@ -74,6 +87,13 @@ function launch() {
       })
     })
     .catch(failed)
+}
+
+/** Launches on mount; the page's push runs only once it is known that notifications are not forwarded. */
+function Pushes() {
+  const { forward } = useHere()
+  useEffect(() => launch(), [])
+  return forward === false ? <Pusher /> : null
 }
 
 /** Sets the app badge to `count`, or clears it at 0, where the browser badges (an installed app). */
@@ -98,7 +118,6 @@ function Pusher() {
   const { registration, device } = useHere()
   const log = useDocOf(1, MessagesDoc)
   const { showSurface, switchConversation } = useUltimate()
-  useEffect(() => launch(), [])
   // The questions to the user; those delivered wait on them, by the rule of the server's `openQuestions`. Until the
   // messages arrive nothing is known, so the badge stays as it was.
   const questions = log?.messages.filter(
@@ -354,6 +373,9 @@ function Control() {
   )
 }
 
+/** No bell while notifications are forwarded: the hub that receives them has its own. */
+const Bell = () => (useHere().forward === false ? <Control /> : null)
+
 export default defineWebExtension({
-  slots: { overlay: [Pusher], 'statusline.right': [{ component: Control, order: -1 }] },
+  slots: { overlay: [Pushes], 'statusline.right': [{ component: Bell, order: -1 }] },
 })

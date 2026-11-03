@@ -1,18 +1,28 @@
 import { createECDH } from 'node:crypto'
+import { basename } from 'node:path'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { defineDoc, defineExtension, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { EntryId } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
 import { onCommit } from '../../lib/commits.ts'
 import { readSecret } from '../../lib/secrets.ts'
+import { readSettings, userSettingsPath } from '../../lib/settings.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import type { OverviewState } from '../conversations/types.ts'
 import { Messages, MessagesApi, MessageSent } from '../messages/api.ts'
 import { SecretsApi } from '../secrets/api.ts'
 import { Standing } from '../subagents/api.ts'
 import { SubmissionLanded } from '../workspaces/api.ts'
-import { KeyAction, PresentAction, SubscribeAction, TestAction, UnsubscribeAction } from './refs.ts'
+import {
+  KeyAction,
+  ModeAction,
+  PresentAction,
+  SubscribeAction,
+  TestAction,
+  UnsubscribeAction,
+} from './refs.ts'
 import type { Device, Kind, PushSubscriptionJson } from './refs.ts'
+import { forward, forwardSetting, ingest } from './forward.ts'
 import { publicKey, sendPush } from './push.ts'
 import type { VapidCache } from './push.ts'
 import { firstLine, landingNotification, messageNotification, rowNotification } from './rules.ts'
@@ -64,6 +74,10 @@ async function key(host: ExtensionHost) {
   return shared.keying
 }
 
+/** Read at each use, so a settings change applies to the next notification. */
+const forwarding = async (host: ExtensionHost) =>
+  forwardSetting(await readSettings(userSettingsPath(host.userHome)))
+
 const devices = async (host: ExtensionHost) =>
   (await host.harness().snapshot(Devices, ROOT_CONVERSATION_ID, context))?.devices ?? []
 
@@ -81,7 +95,7 @@ async function remove(host: ExtensionHost, endpoint: string) {
 async function sendDevice(
   host: ExtensionHost,
   device: StoredDevice,
-  notification: Omit<Notification, 'kind'> & { kind?: Kind },
+  notification: Pick<Notification, 'title' | 'body' | 'path' | 'tag'> & { kind?: Kind },
   signal?: AbortSignal,
 ) {
   const privateKey = await readSecret(host.userHome, KEY)
@@ -112,6 +126,18 @@ async function sendDevice(
 }
 
 async function deliver(host: ExtensionHost, notification: Notification) {
+  const target = await forwarding(host)
+  if (target) {
+    // The hub decides who is told and when: this project's devices get nothing, so nothing arrives twice.
+    const { status } = await forward(
+      target,
+      ingest(basename(host.home), notification),
+      host.userHome,
+    )
+    // Only the status: the URL or the answer could carry a secret.
+    if (status < 200 || status >= 300) host.notice(`Notifications: forwarding answered ${status}`)
+    return
+  }
   const shared = state(host)
   await Promise.all(
     (await devices(host)).map(async (device) => {
@@ -273,6 +299,9 @@ function assertEndpoint(value: unknown): asserts value is string {
 }
 
 export const actions = {
+  mode: implementAction(ModeAction, async (_args, { host }) => ({
+    forward: (await forwarding(host)) !== undefined,
+  })),
   key: implementAction(KeyAction, async (_args, { host }) => ({ key: await key(host) })),
   subscribe: implementAction(SubscribeAction, async (args, { host, device }) => {
     if (!args || typeof args !== 'object' || Array.isArray(args))

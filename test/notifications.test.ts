@@ -1,11 +1,16 @@
 import { createECDH, createPublicKey, verify } from 'node:crypto'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { describe, expect, it } from 'vitest'
+import { forward, forwardSetting, ingest } from '../extensions/notifications/forward.ts'
 import { encrypt, publicKey, vapidToken } from '../extensions/notifications/push.ts'
 import {
   landingNotification,
   messageNotification,
   rowNotification,
 } from '../extensions/notifications/rules.ts'
+import { writeSecret } from '../extensions/secrets/store.ts'
+import { temp } from './helpers.ts'
 
 it('reproduces the complete RFC 8291 Appendix A encrypted body byte for byte', () => {
   const encrypted = encrypt(
@@ -87,6 +92,8 @@ describe('notification rules', () => {
 
   it('names a branch question by its title and previews its first question', () => {
     expect(messageNotification(question, 2, 'A quieter sidebar')).toEqual({
+      conversation: 8,
+      message: 75,
       kind: 'input',
       title: 'A quieter sidebar',
       body: 'Which layout?',
@@ -97,6 +104,8 @@ describe('notification rules', () => {
 
   it("names @ultimate's question Ultimate", () => {
     expect(messageNotification({ ...question, from: 2 }, 2, 'Standing agent')).toEqual({
+      conversation: 2,
+      message: 75,
       kind: 'input',
       title: 'Ultimate',
       body: 'Which layout?',
@@ -109,6 +118,7 @@ describe('notification rules', () => {
     expect(
       messageNotification({ ...question, from: 2, reply: false, questions: undefined }, 2),
     ).toEqual({
+      conversation: 2,
       kind: 'finished',
       title: 'Ultimate',
       body: 'Please choose.',
@@ -129,6 +139,7 @@ describe('notification rules', () => {
     expect(
       landingNotification({ title: 'A quieter sidebar', conversationId: 8, sha: 'abc' }),
     ).toEqual({
+      conversation: 8,
       kind: 'landed',
       title: 'Landed',
       body: 'A quieter sidebar',
@@ -139,6 +150,7 @@ describe('notification rules', () => {
 
   it('announces an error in @ultimate', () => {
     expect(rowNotification({ runState: 'error', inputId: 12 }, 2, '')).toEqual({
+      conversation: 2,
       kind: 'failed',
       title: 'Ultimate',
       body: 'Stopped with an error.',
@@ -151,6 +163,7 @@ describe('notification rules', () => {
     expect(
       rowNotification({ runState: 'answered', answerId: 13 }, 2, '\n**Done.**\nDetails.'),
     ).toEqual({
+      conversation: 2,
       kind: 'finished',
       title: 'Ultimate',
       body: 'Done.',
@@ -163,5 +176,77 @@ describe('notification rules', () => {
     expect(
       rowNotification({ runState: 'answered', answerId: 13, internalInput: true }, 2, 'Done.'),
     ).toBeUndefined()
+  })
+})
+
+describe('forwarding', () => {
+  it('reads notifications.forward, and nothing forwards without it', () => {
+    expect(forwardSetting({})).toBeUndefined()
+    expect(forwardSetting({ notifications: {} })).toBeUndefined()
+    expect(
+      forwardSetting({ notifications: { forward: { url: 'http://hub.example/in' } } }),
+    ).toEqual({ url: 'http://hub.example/in', headers: {} })
+    expect(() => forwardSetting({ notifications: { forward: { url: 'hub' } } })).toThrow(
+      'HTTP(S) url',
+    )
+  })
+
+  it('posts a question as JSON with header secrets from the environment and the Secrets panel', async () => {
+    const home = await temp()
+    await writeSecret(home, 'HUB_TOKEN', 'from-panel')
+    const received: { headers: Record<string, unknown>; body: unknown }[] = []
+    const server = createServer((request, response) => {
+      let text = ''
+      request.on('data', (chunk: Buffer) => (text += chunk))
+      request.on('end', () => {
+        received.push({ headers: request.headers, body: JSON.parse(text) })
+        response.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true,"sent":1}')
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/ingest`
+      const notification = messageNotification(
+        { id: 75, from: 8, to: 'user', reply: true, text: 'Which layout?' },
+        2,
+        'A quieter sidebar',
+      )!
+      const result = await forward(
+        {
+          url,
+          headers: { 'X-Hub-Secret': '${HUB_SECRET}', Authorization: 'Bearer ${HUB_TOKEN}' },
+        },
+        ingest('my-app-1a2b3c4d', notification),
+        home,
+        { HUB_SECRET: 'from-env' },
+      )
+      expect(result).toEqual({ status: 200, text: '{"ok":true,"sent":1}' })
+      expect(received).toHaveLength(1)
+      expect(received[0].headers).toMatchObject({
+        'content-type': 'application/json',
+        'x-hub-secret': 'from-env',
+        authorization: 'Bearer from-panel',
+      })
+      expect(received[0].body).toEqual({
+        project: 'my-app-1a2b3c4d',
+        kind: 'input',
+        title: 'A quieter sidebar',
+        body: 'Which layout?',
+        conversation: 8,
+        message: 75,
+        tag: 'message:75',
+      })
+      await expect(
+        forward(
+          { url, headers: { 'X-Hub-Secret': '${MISSING}' } },
+          received[0].body as never,
+          home,
+          {},
+        ),
+      ).rejects.toThrow('notifications.forward needs MISSING')
+      expect(received).toHaveLength(1)
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+    }
   })
 })

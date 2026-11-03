@@ -23,6 +23,11 @@ export type Device = {
   at: number
 }
 
+/**
+ * `null` → `{ forward }`: whether the user's settings forward notifications to a webhook (`notifications.forward`).
+ * Then the page has no push of its own: no service worker, bell or badge.
+ */
+export const ModeAction = actionRef<null, { forward: boolean }>('notifications', 'mode')
 /** `null` → `{ key }`: the application server key to subscribe with (base64url, uncompressed P-256), made on first call. User-only. */
 export const KeyAction = actionRef<null, { key: string }>('notifications', 'key')
 /**
