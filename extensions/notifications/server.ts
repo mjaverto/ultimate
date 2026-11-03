@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { defineDoc, defineExtension, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
 import type { EntryId } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
+import { onCommit } from '../../lib/commits.ts'
 import { readSecret } from '../../lib/secrets.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import type { OverviewState } from '../conversations/types.ts'
@@ -232,7 +233,7 @@ export default function notifications(host: ExtensionHost) {
   host.onOpen(async () => {
     opened = true
     // Not a reactor: @ultimate's terminal runs are Pi's overview document changes, not domain events.
-    stop = host.harness().subscribeCommits((publication) => {
+    stop = onCommit(host.harness(), (publication) => {
       if (
         publication.changes.some(
           (change) =>
