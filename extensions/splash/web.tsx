@@ -1,9 +1,8 @@
 import { TriangleAlertIcon, XIcon } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { api, defineWebExtension, errorMessage, resumed, useReady, useStore } from '@/sdk'
+import { api, defineWebExtension, errorMessage, resumed, useReady } from '@/sdk'
 import { store } from '@/sdk/client'
 import { StatusAction } from '../onboarding/ui.tsx'
-import { Electric } from './electric.tsx'
 
 /** The core's readiness deadline: not ready by then, the app opens anyway and the notice names what is missing. */
 const timeout = 8000
@@ -33,78 +32,106 @@ const letters: readonly (readonly string[])[] = [
   ], // E
 ]
 const view = { x: 118, width: 13533, height: 1514 }
+const outline = letters.flat().join('')
 
-/** The wordmark's outline, for the lightning to trace. */
-const charge = `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${view.x} 0 ${view.width} ${view.height}" width="${view.width / 10}" height="${view.height / 10}"><path d="${letters.flat().join('')}" fill="#fff"/></svg>`,
-)}`
+/** Each letter's horizontal extent in font units, from its outline's x coordinates (every path point is absolute). */
+const extents = letters.map((paths) => {
+  const xs = paths
+    .join(' ')
+    .match(/-?\d+(?:\.\d+)?/g)!
+    .map(Number)
+    .filter((_, index) => index % 2 === 0)
+  const x = Math.min(...xs)
+  return { x, width: Math.max(...xs) - x }
+})
+/** A length in font units as a share of the wordmark's width. */
+const share = (units: number) => `${(units / view.width) * 100}%`
 
-/**
- * Lightning around the wordmark, in a box reaching past it so the glow has room. `level` drives it: how far the sweep
- * has reached and how strong it is. Theme colours: brand light in dark, brand ink in light.
- */
-function Lightning({ level }: { level: () => Level }) {
-  const theme = useStore((state) => state.ui.theme)
-  return (
-    <Electric
-      arcs={0.25}
-      bend={0.45}
-      className="pointer-events-none absolute top-1/2 left-1/2 h-[400%] w-[120%] -translate-1/2"
-      color={theme === 'dark' ? '#e4d6ff' : '#7b47bf'}
-      crackle={1}
-      flicker={0.3}
-      glow={0.8}
-      glowColor={theme === 'dark' ? '#bb9af4' : '#7b47bf'}
-      bursts={() => level().bursts}
-      presence={() => level().presence}
-      reveal={() => level().reveal}
-      scale={1 / 1.2}
-      speed={2}
-      src={charge}
-      strands={3}
-      theme={theme}
-      thickness={1.3}
-    />
-  )
-}
+/** Where the light starts and ends, as a share of the wordmark's width: just past either end. */
+const travel = { from: -0.12, to: 1.12 }
+/** The light's width, as a share of the wordmark's. */
+const beam = 0.12
 
 /**
- * The wordmark: drawn by lightning alone, or, `still` (reduced motion or no WebGL2), as solid letters. The SVG keeps
- * the wordmark's size either way.
+ * The wordmark: a soft glow behind it, the light that crosses it, and its letters, each with a lit copy above it that
+ * flares as the light passes. Every part is its own box, so the browser animates their transform and opacity without
+ * the main thread. `still` (reduced motion) shows the letters as they settle.
  */
-function Wordmark({ still, level }: { still: boolean; level: () => Level }) {
+function Wordmark({ still }: { still: boolean }) {
+  const hidden = still ? '' : 'opacity-0'
   return (
     <div className="relative">
       <svg
         aria-hidden="true"
-        className="block w-full overflow-visible"
+        className="block w-full"
+        viewBox={`${view.x} 0 ${view.width} ${view.height}`}
+      />
+      <svg
+        aria-hidden="true"
+        className={`absolute inset-0 size-full overflow-visible ${still ? 'opacity-40' : 'opacity-0'}`}
+        data-glow=""
         viewBox={`${view.x} 0 ${view.width} ${view.height}`}
       >
-        {still && <path className="fill-brand" d={letters.flat().join('')} />}
+        <filter height="260%" id="splash-glow" width="130%" x="-15%" y="-80%">
+          <feGaussianBlur stdDeviation="180" />
+        </filter>
+        <path className="fill-brand/50 dark:fill-brand" d={outline} filter="url(#splash-glow)" />
       </svg>
-      {!still && <Lightning level={level} />}
-      <div data-sweep="" hidden />
+      {!still && (
+        <div
+          className="absolute top-1/2 left-0 h-[420%] -translate-y-1/2 bg-[radial-gradient(closest-side,color-mix(in_oklab,var(--brand)_30%,transparent),transparent)] opacity-0 dark:bg-[radial-gradient(closest-side,color-mix(in_oklab,var(--brand)_30%,white),color-mix(in_oklab,var(--brand)_40%,transparent)_35%,transparent)]"
+          data-light=""
+          style={{ width: `${beam * 100}%` }}
+        />
+      )}
+      {letters.map((paths, index) => {
+        const { x, width } = extents[index]
+        const box = `${x} 0 ${width} ${view.height}`
+        return (
+          <div
+            className={`absolute inset-y-0 ${hidden}`}
+            data-letter=""
+            key={x}
+            style={{ left: share(x - view.x), width: share(width) }}
+          >
+            <svg
+              aria-hidden="true"
+              className="absolute inset-0 size-full overflow-visible"
+              viewBox={box}
+            >
+              <path className="fill-brand" d={paths.join('')} />
+            </svg>
+            {!still && (
+              <svg
+                aria-hidden="true"
+                className="absolute inset-0 size-full overflow-visible opacity-0"
+                data-lit=""
+                viewBox={box}
+              >
+                <path
+                  className="fill-[color-mix(in_oklab,var(--brand)_55%,white)] dark:fill-[color-mix(in_oklab,var(--brand)_25%,white)]"
+                  d={paths.join('')}
+                />
+              </svg>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-/** Whether the lightning can draw: WebGL2, asked once on a throwaway canvas. */
-function canSpark() {
-  const gl = document.createElement('canvas').getContext('webgl2')
-  gl?.getExtension('WEBGL_lose_context')?.loseContext()
-  return gl !== null
-}
-
 /** On screen at least this long, so a warm start does not flash. */
 const minimum = { motion: 700, still: 400 }
-/** Once ready, the rest of the drawing takes at most this long. */
-const rush = 240
-/** The lightning sweeps across the name for this long, then settles over as long again. */
-const sweep = 900
-/** Once swept, the lightning idles at this strength. */
-const idle = 0.75
+/** The light crosses the name in this long. */
+const sweep = 560
+/** A letter rises into place in this long, starting just before the light reaches it. */
+const rise = 380
+const lead = 60
+/** A lit letter cools to the brand colour in this long. */
+const cool = 800
 /** The first run's intro plays at this rate: the signature version. */
-const signatureRate = 0.8
+const signatureRate = 0.75
 
 const out = 'cubic-bezier(0.22, 1, 0.36, 1)'
 const inOut = 'cubic-bezier(0.45, 0, 0.25, 1)'
@@ -113,17 +140,7 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.m
 const finished = (animations: readonly Animation[]) =>
   Promise.allSettled(animations.map((animation) => animation.finished))
 
-/** The lightning's state: how far it has swept across the name (0 to 1) and how strong it is. */
-interface Level {
-  reveal: number
-  presence: number
-  /** 1 once the sweep has reached the end: the lightning bursts from the middle. */
-  bursts: number
-}
-
 interface Show {
-  /** The lightning, read every frame. */
-  level(): Level
   /** Plays the first run's signature version: a slower intro in full, the rule drawn beneath. */
   signature(): void
   /** Settles the wordmark and fades the overlay into the app; true once it has gone, false when cancelled. */
@@ -132,16 +149,17 @@ interface Show {
 }
 
 /**
- * Animates the splash in `overlay` with the Web Animations API: a clock drives the lightning's sweep across the name and
- * its settling. Held longer, a rule draws out beneath until the reveal. `still` (reduced
- * motion) shows the settled wordmark and only fades. `release` hands input back to the app as the overlay fades.
+ * Animates the splash in `overlay` with the Web Animations API, transform and opacity only, so the compositor plays it
+ * however busy the main thread is: a light crosses the name, each letter rises and flares as it passes, then the name
+ * glows once. Held longer, the glow breathes and a rule draws out beneath until the reveal. `still` (reduced motion)
+ * shows the settled wordmark and only fades. `release` hands input back to the app as the overlay fades.
  */
 function play(overlay: HTMLElement, still: boolean, release: () => void): Show {
   const started = performance.now()
   const find = (selector: string) => overlay.querySelector(selector)!
-  /** The drawing: hurried along once the app is ready. */
+  /** The light and the letters: the reveal waits for them. */
   const intro: Animation[] = []
-  /** The rule: not waited for. */
+  /** The flares cooling, the glow and the rule: not waited for. */
   const flair: Animation[] = []
   const exit: Animation[] = []
   let cancelled = false
@@ -151,19 +169,66 @@ function play(overlay: HTMLElement, still: boolean, release: () => void): Show {
   /** The reveal has begun: the show no longer changes. */
   let committed = false
 
-  /** The sweep's clock: an invisible animation, so hurrying and the signature rate move the lightning too. */
-  let clock: Animation | undefined
   if (!still) {
-    clock = find('[data-sweep]').animate([{ opacity: 0 }, { opacity: 1 }], {
-      delay: 60,
-      duration: sweep * 2,
-      fill: 'both',
+    const span = travel.to - travel.from
+    intro.push(
+      find('[data-light]').animate(
+        [
+          { opacity: 0, transform: `translateX(${((travel.from - beam / 2) / beam) * 100}%)` },
+          { opacity: 1, offset: 0.15 },
+          { opacity: 1, offset: 0.85 },
+          { opacity: 0, transform: `translateX(${((travel.to - beam / 2) / beam) * 100}%)` },
+        ],
+        { duration: sweep, fill: 'both' },
+      ),
+    )
+    const lit = overlay.querySelectorAll('[data-lit]')
+    overlay.querySelectorAll('[data-letter]').forEach((letter, index) => {
+      const { x, width } = extents[index]
+      const centre = (x + width / 2 - view.x) / view.width
+      const delay = Math.max(0, (sweep * (centre - travel.from)) / span - lead)
+      intro.push(
+        letter.animate(
+          [
+            { opacity: 0, transform: 'translateY(14%)' },
+            { opacity: 1, transform: 'none' },
+          ],
+          { delay, duration: rise, easing: out, fill: 'both' },
+        ),
+      )
+      flair.push(
+        lit[index].animate([{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 0 }], {
+          delay,
+          duration: cool,
+          easing: 'ease-out',
+          fill: 'both',
+        }),
+      )
     })
-    intro.push(clock)
-    // Still loading once all of it has played: the rule says so.
-    // oxlint-disable-next-line typescript/no-floating-promises -- finished uses allSettled to consume animation cancellations; rule starts only a synchronous animation.
-    void finished([...intro, ...flair]).then(() => {
-      if (!committed) rule()
+    // As the light leaves the name, it glows once and settles.
+    const glow = find('[data-glow]')
+    const pulse = glow.animate(
+      [
+        { opacity: 0, transform: 'scale(0.97)' },
+        { opacity: 1, transform: 'scale(1.015)', offset: 0.3 },
+        { opacity: 0.4, transform: 'none' },
+      ],
+      { delay: sweep * 0.8, duration: 1000, easing: inOut, fill: 'both' },
+    )
+    flair.push(pulse)
+    // Still loading once it has played: the glow breathes and the rule says so.
+    // oxlint-disable-next-line typescript/no-floating-promises -- finished uses allSettled to consume animation cancellations; breathe and rule start only synchronous animations.
+    void finished([...intro, pulse]).then(() => {
+      if (committed || cancelled) return
+      flair.push(
+        glow.animate([{ opacity: 0.4 }, { opacity: 0.75 }], {
+          duration: 1600,
+          direction: 'alternate',
+          easing: inOut,
+          iterations: Infinity,
+        }),
+      )
+      rule()
     })
   }
 
@@ -181,35 +246,12 @@ function play(overlay: HTMLElement, still: boolean, release: () => void): Show {
     )
   }
 
-  /** Finishes the drawing within `rush` ms. */
-  function hurry() {
-    const remaining = Math.max(
-      0,
-      ...intro.map((animation) => {
-        const end = Number(animation.effect?.getComputedTiming().endTime ?? 0)
-        return (end - Number(animation.currentTime ?? 0)) / animation.playbackRate
-      }),
-    )
-    if (remaining > rush)
-      for (const animation of intro)
-        animation.updatePlaybackRate((animation.playbackRate * remaining) / rush)
-  }
-
   function cancel() {
     cancelled = true
     for (const animation of [...intro, ...flair, ...exit]) animation.cancel()
   }
 
   return {
-    level() {
-      const progress = clock?.effect?.getComputedTiming().progress ?? 0
-      const settle = Math.max(0, progress * 2 - 1)
-      return {
-        reveal: Math.min(1, progress * 2),
-        presence: idle + (1 - idle) * (1 - settle),
-        bursts: progress >= 0.5 ? 1 : 0,
-      }
-    },
     signature() {
       if (signature || committed || still) return
       signature = true
@@ -234,8 +276,7 @@ function play(overlay: HTMLElement, still: boolean, release: () => void): Show {
           handOver()
           return true
         }
-        if (signature) await finished(intro)
-        else hurry()
+        // A sweep still under way finishes at its own pace: it is short, and a rush would look like a stumble.
         await finished(intro)
         if (cancelled) return false
         handOver()
@@ -258,12 +299,12 @@ function play(overlay: HTMLElement, still: boolean, release: () => void): Show {
           exit.push(
             mark.animate(
               [
-                { opacity: 1, transform: 'none', filter: 'blur(0)' },
-                { opacity: 0, transform: 'scale(1.03)', filter: 'blur(4px)' },
+                { opacity: 1, transform: 'none' },
+                { opacity: 0, transform: 'scale(1.04)' },
               ],
-              { duration: 380, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'both' },
+              { duration: 320, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'both' },
             ),
-            overlay.animate(fade, { delay: 80, duration: 460, easing: out, fill: 'both' }),
+            overlay.animate(fade, { delay: 60, duration: 380, easing: out, fill: 'both' }),
           )
         await finished(exit)
         return !cancelled
@@ -338,12 +379,9 @@ function Splash({ replay }: { replay?: () => void }) {
   // Mounted once the page is ready, as on a very warm start or a hot reload, on a reload that shows the previous
   // page's view meanwhile, or driven by automation such as the agent's browser tool: nothing to show.
   const [gone, setGone] = useState(!replay && (ready || resumed || navigator.webdriver))
-  const [still] = useState(
-    () => matchMedia('(prefers-reduced-motion: reduce)').matches || !canSpark(),
-  )
+  const [still] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
   const overlay = useRef<HTMLDivElement>(null)
   const show = useRef<Show>(undefined)
-  const level = () => show.current?.level() ?? { reveal: 0, presence: 0, bursts: 0 }
 
   useLayoutEffect(() => {
     if (!overlay.current) return undefined
@@ -393,7 +431,7 @@ function Splash({ replay }: { replay?: () => void }) {
       tabIndex={-1}
     >
       <div className="relative w-[min(72vw,40rem)]" data-mark="">
-        <Wordmark level={level} still={still} />
+        <Wordmark still={still} />
         <div
           className="relative mx-auto mt-[7%] h-px w-1/4 overflow-hidden bg-foreground/10 opacity-0"
           data-rule=""
