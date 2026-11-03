@@ -211,6 +211,8 @@ function TranscriptEntries() {
   const failed = useRef<[number, number][]>([])
   const [filling, setFilling] = useState(0)
   const sentinel = useRef<HTMLDivElement>(null)
+  /** What `transcript.top` pins over the top of the rows. */
+  const pinned = useRef<HTMLDivElement>(null)
   const { contentRef, scrollRef, stopScroll, state, isAtBottom, escapedFromLock } =
     useStickToBottomContext()
   // While following, the browser must not anchor: a row above that shrinks as the last one grows would move the view up,
@@ -518,14 +520,49 @@ function TranscriptEntries() {
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set())
   const isOpen = (run: WorkRun) => isOpenIn(opened, run)
   const open = (run: WorkRun, value: boolean) => setOpened((keys) => openIn(keys, run, value))
-  // Reveal a stored row without the auto-follow animation overriding the jump; a row older than those loaded needs the
-  // history down to it first, and one in a folded run needs the run open.
-  const [reveal, setReveal] = useState<number>()
+  // A revealed row keeps its top at the top of the view, below what `transcript.top` pins over the rows, while what is
+  // above it settles: the pinned strip arriving after the jump, rows above finishing their layout (Safari does not
+  // anchor scrolling). The reader's own scroll or tap, or following the newest row again, lets it go.
+  const held = useRef<Element>(null)
+  const hold = useEffectEvent(() => {
+    const element = held.current
+    const scroll = scrollRef.current
+    if (!element || !scroll) return
+    if (!element.isConnected || state.isAtBottom) {
+      held.current = null
+      return
+    }
+    scroll.scrollTop +=
+      element.getBoundingClientRect().top -
+      scroll.getBoundingClientRect().top -
+      (pinned.current?.offsetHeight ?? 0)
+  })
+  useEffect(() => {
+    const scroll = scrollRef.current
+    const content = contentRef.current
+    if (!scroll || !content || !pinned.current) return undefined
+    const resize = new ResizeObserver(() => hold())
+    for (const element of [scroll, content, pinned.current]) resize.observe(element)
+    const release = () => {
+      held.current = null
+    }
+    const inputs = ['wheel', 'touchstart', 'pointerdown', 'keydown']
+    for (const type of inputs) scroll.addEventListener(type, release, { passive: true })
+    return () => {
+      resize.disconnect()
+      for (const type of inputs) scroll.removeEventListener(type, release)
+    }
+  }, [scrollRef, contentRef])
+  // Reveal a stored row, or one tool call in it, without the auto-follow animation overriding the jump; a row older than
+  // those loaded needs the history down to it first, and one in a folded run needs the run open.
+  const [reveal, setReveal] = useState<{ entry: number; call?: string }>()
   useEvent('ultimate:reveal-entry', (value) => {
-    const target = value as { conversationId?: number; entryId?: number } | undefined
+    const target = value as
+      | { conversationId?: number; entryId?: number; toolCallId?: string }
+      | undefined
     const entryId = target?.entryId
     if (target?.conversationId === id && entryId !== undefined && Number.isSafeInteger(entryId))
-      setReveal(entryId)
+      setReveal({ entry: entryId, call: target?.toolCallId })
   })
   const revealStep = useEffectEvent(() => {
     if (reveal === undefined || loading || pending) return
@@ -533,10 +570,11 @@ function TranscriptEntries() {
       setReveal(undefined)
       return
     }
-    if (!entries.some((entry) => entry.id === reveal)) {
-      if (cursor !== undefined && reveal < cursor) {
+    const { entry: revealed, call } = reveal
+    if (!entries.some((entry) => entry.id === revealed)) {
+      if (cursor !== undefined && revealed < cursor) {
         // oxlint-disable-next-line typescript/no-floating-promises -- loadDown catches history failures and displays them with setError.
-        void loadDown(reveal)
+        void loadDown(revealed)
         return
       }
       // Inside the window's range: a fill still reading it brings it.
@@ -546,7 +584,7 @@ function TranscriptEntries() {
     const between = threaded.find(
       (row): row is BetweenGroup<(typeof grouped)[number]> =>
         'between' in row &&
-        row.between.some((inner) => itemParts(inner).some((part) => part.entry.id === reveal)),
+        row.between.some((inner) => itemParts(inner).some((part) => part.entry.id === revealed)),
     )
     if (between && !readBetween(id, between)) {
       writeBetween(id, between, true)
@@ -554,22 +592,32 @@ function TranscriptEntries() {
       return
     }
     const group = grouped.find(
-      (row): row is AsideGroup => 'aside' in row && !!runOf(row.aside, reveal),
+      (row): row is AsideGroup => 'aside' in row && !!runOf(row.aside, revealed),
     )
     const first = group && asideKey(group)
     if (first !== undefined && !shownAside.has(first)) {
       setShownAside((keys) => new Set(keys).add(first))
       return
     }
-    const run = compact && runOf(rows, reveal)
+    const run = compact && runOf(rows, revealed)
     if (run && !isOpen(run)) {
       open(run, true)
       return
     }
-    const element = contentRef.current?.querySelector(`[data-entry-id="${reveal}"]`)
+    // In compact mode an entry's text and its kept tools are separate rows, each with the entry's id.
+    const row = `[data-entry-id="${revealed}"]`
+    const block =
+      call === undefined
+        ? undefined
+        : contentRef.current?.querySelector(`${row} [data-tool-call-id="${CSS.escape(call)}"]`)
+    const element =
+      block && block.getBoundingClientRect().height > 0
+        ? block
+        : contentRef.current?.querySelector(row)
     if (element) {
       stopScroll()
-      element.scrollIntoView({ block: 'start' })
+      held.current = element
+      hold()
     }
     setReveal(undefined)
   })
@@ -616,7 +664,9 @@ function TranscriptEntries() {
     <TranscriptContext value={entries}>
       {/* At the top of the view as it scrolls, taking no room: its margin cancels the gap after it. */}
       <div className="pointer-events-none sticky top-0 z-10 -mb-3 h-0 [overflow-anchor:none]">
-        <Slot name="transcript.top" />
+        <div ref={pinned}>
+          <Slot name="transcript.top" />
+        </div>
       </div>
       {!loading && entries.length > 0 && cursor !== undefined && (
         <div
