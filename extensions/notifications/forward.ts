@@ -78,8 +78,8 @@ export async function forward(target: Forward, body: Ingest, userHome: string, e
     })
     return { status: response.status, text: (await response.text()).slice(0, 500) }
   } catch (error) {
-    // Fetch quotes a header value it refuses, which can be a secret: report only the network code or the error's name.
     const { name, cause } = error as Error & { cause?: { code?: unknown } }
+    // oxlint-disable-next-line preserve-caught-error -- Fetch quotes a header value it refuses, which can be a secret: keep only the network code or the error's name.
     throw new Error(
       `notifications.forward failed: ${typeof cause?.code === 'string' ? cause.code : name}`,
     )
