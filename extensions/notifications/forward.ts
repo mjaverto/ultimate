@@ -67,15 +67,21 @@ async function expand(headers: Record<string, string>, userHome: string, env: No
 
 /** POST one notification once; the caller reports a failed status. No retry: notifications are at most once. */
 export async function forward(target: Forward, body: Ingest, userHome: string, env = process.env) {
-  const response = await fetch(target.url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(await expand(target.headers, userHome, env)),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
-    redirect: 'error',
-  })
-  return { status: response.status, text: (await response.text()).slice(0, 500) }
+  const headers = await expand(target.headers, userHome, env)
+  try {
+    const response = await fetch(target.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+      redirect: 'error',
+    })
+    return { status: response.status, text: (await response.text()).slice(0, 500) }
+  } catch (error) {
+    // Fetch quotes a header value it refuses, which can be a secret: report only the network code or the error's name.
+    const { name, cause } = error as Error & { cause?: { code?: unknown } }
+    throw new Error(
+      `notifications.forward failed: ${typeof cause?.code === 'string' ? cause.code : name}`,
+    )
+  }
 }

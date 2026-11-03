@@ -37,7 +37,8 @@ Secrets); never write a token inline. A missing one fails that send with its nam
 `finished`, `failed` or `landed`; `title`, `body` and `tag` are the notification's, chosen by the rules below.
 `conversation` is the conversation a tap should open, and `message`, only on a question, the question's id there: the
 page opens at it with `/?conversation=<conversation>&message=<message>`. Each notification is sent once, with no retry
-and no on-screen check: the receiver decides who is told. A non-2xx answer reports a notice with its status only.
+and no on-screen check: the receiver decides who is told. A non-2xx answer reports a notice with its status only, a
+failed request with its network code (`ECONNREFUSED`) or error name, never a header value.
 
 While forwarding, the page has no push of its own: no bell, no service worker registration, no app badge, and no
 `WEB_PUSH_VAPID_KEY` is created. Devices subscribed earlier keep their subscriptions but receive nothing until the

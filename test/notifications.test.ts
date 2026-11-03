@@ -249,4 +249,15 @@ describe('forwarding', () => {
       await new Promise((resolve) => server.close(resolve))
     }
   })
+
+  it('never quotes a header secret that fetch refuses', async () => {
+    const sent = forward(
+      { url: 'http://127.0.0.1:9/ingest', headers: { Authorization: 'Bearer ${HUB_SECRET}' } },
+      ingest('my-app-1a2b3c4d', landingNotification({ title: 'A', conversationId: 8, sha: 'abc' })),
+      await temp(),
+      { HUB_SECRET: 'synthetic-token\nsecond-line' },
+    )
+    await expect(sent).rejects.toThrow('notifications.forward failed: TypeError')
+    await expect(sent).rejects.not.toThrow('synthetic-token')
+  })
 })
