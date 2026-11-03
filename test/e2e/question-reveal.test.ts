@@ -1,7 +1,7 @@
 // "answer" on a question in To-dos opens the asker's conversation with the question's card at the top of the view. It
 // once left the view at the bottom: clearing the request re-ran the effect whose cleanup cancelled the reveal's frame.
 // The card must also land below the pinned prompt strip, which arrives after the jump, not at the top of the response
-// that asked, whose text comes first.
+// that asked, whose text comes first; a short question at the end needs room below it to get there.
 import { join, resolve } from 'node:path'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
@@ -39,13 +39,13 @@ it('brings the question card to the top of the view below the pinned strip', asy
   const route: FauxResponseFactory = (transcript) => {
     server.host.faux!.appendResponses([route])
     const last = transcript.messages.at(-1)!
-    if (last.role === 'user' && last.content === 'ask')
+    if (last.role === 'user' && typeof last.content === 'string' && last.content.startsWith('ask'))
       return fauxAssistantMessage(
         [
           fauxText(`Here is my assessment. ${'It weighs both ways. '.repeat(20)}`),
           fauxToolCall('message', {
             to: 'user',
-            text: 'One decision before I go on.',
+            text: `${last.content}: one decision before I go on.`,
             questions: [
               {
                 text: 'Which way?',
@@ -77,12 +77,13 @@ it('brings the question card to the top of the view below the pinned strip', asy
         context,
       )
     ).wait(context)
-  // The question sits between long answers, far above the bottom the conversation opens at.
-  for (const content of ['one', 'two', 'ask', 'three', 'four', 'five', 'six'])
+  // One question sits between long answers, far above the bottom the conversation opens at; the other is the newest.
+  for (const content of ['one', 'two', 'ask early', 'three', 'four', 'five', 'six', 'ask last'])
     await say(branch, content)
   await say(other, 'hello')
   const log = () => server.harness.snapshot(Messages, ROOT_CONVERSATION_ID, context)
-  const asked = (await log())!.messages.find((message) => message.to === 'user')!
+  const asked = (await log())!.messages.filter((message) => message.to === 'user')
+  expect(asked).toHaveLength(2)
 
   const browser = await chromium.launch({
     executablePath: await browserBinary(),
@@ -94,18 +95,21 @@ it('brings the question card to the top of the view below the pinned strip', asy
   await post(server, '/api/ui', { set: { 'shell.panel': 'todos', 'shell.panelOpen': true } })
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${server.url}/?conversation=${other}`)
-  await page.locator(`[data-todo-question="${asked.id}"] button`).click()
-  // How far the card's top sits below the strip's bottom, once both show.
-  const gap = () =>
-    page.evaluate((id) => {
-      const card = document.querySelector(`[data-message-outgoing="${id}"]`)
+  // How far a card's top sits below the strip's bottom, once both show.
+  const gap = (id: number) =>
+    page.evaluate((message) => {
+      const card = document.querySelector(`[data-message-outgoing="${message}"]`)
       const strip = document.querySelector('[data-ui="pinned-prompt"]')
       return card && strip
         ? card.getBoundingClientRect().top - strip.getBoundingClientRect().bottom
         : Number.NaN
-    }, asked.id)
-  // The bubble's own top margin is the only space between them, and it stays so.
-  await until(async () => Math.abs((await gap()) - 8) < 4, 10_000)
-  await page.waitForTimeout(500)
-  expect(Math.abs((await gap()) - 8)).toBeLessThan(4)
+    }, id)
+  // From another conversation, then within the branch: the bubble's own top margin is the only space between them,
+  // and it stays so.
+  for (const { id } of asked) {
+    await page.locator(`[data-todo-question="${id}"] button`).click()
+    await until(async () => Math.abs((await gap(id)) - 8) < 4, 10_000)
+    await page.waitForTimeout(500)
+    expect(Math.abs((await gap(id)) - 8)).toBeLessThan(4)
+  }
 })

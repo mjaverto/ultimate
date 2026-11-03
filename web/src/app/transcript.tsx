@@ -181,6 +181,10 @@ export function Transcript({ dock }: { dock?: boolean }) {
   )
 }
 
+/** The space between a transcript's rows. */
+const rowGap = (content: Element | null) =>
+  content ? Number.parseFloat(getComputedStyle(content).rowGap) || 0 : 0
+
 function TranscriptEntries() {
   const { id, entries: active, older, live, busy, loading } = useConversation()
   const [history, setHistory] = useState<EntryRecord[]>([])
@@ -332,9 +336,7 @@ function TranscriptEntries() {
     if (!scroll || tailSpace === 0) return undefined
     const releaseTail = () => {
       // Release temporary space once it cannot clamp the reader, or they return to the bottom.
-      const gap = contentRef.current
-        ? Number.parseFloat(getComputedStyle(contentRef.current).rowGap) || 0
-        : 0
+      const gap = rowGap(contentRef.current)
       const bottom = scroll.scrollHeight - scroll.clientHeight
       if (scroll.scrollTop <= bottom - tailSpace - gap || scroll.scrollTop >= bottom - 1)
         setTailSpace(0)
@@ -524,6 +526,8 @@ function TranscriptEntries() {
   // above it settles: the pinned strip arriving after the jump, rows above finishing their layout (Safari does not
   // anchor scrolling). The reader's own scroll or tap, or following the newest row again, lets it go.
   const held = useRef<Element>(null)
+  // The most the strip covered while holding: it hides while the start card shows, and chasing that would loop.
+  const cover = useRef(0)
   const hold = useEffectEvent(() => {
     const element = held.current
     const scroll = scrollRef.current
@@ -532,10 +536,16 @@ function TranscriptEntries() {
       held.current = null
       return
     }
-    scroll.scrollTop +=
-      element.getBoundingClientRect().top -
-      scroll.getBoundingClientRect().top -
-      (pinned.current?.offsetHeight ?? 0)
+    cover.current = Math.max(cover.current, pinned.current?.offsetHeight ?? 0)
+    const move =
+      element.getBoundingClientRect().top - scroll.getBoundingClientRect().top - cover.current
+    // A short row at the end needs room below it to reach the top: tail space, with a row gap more so the reader is not
+    // at the very bottom, where it is released.
+    const room = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop
+    if (move > room) setTailSpace(tailSpace + move - room + rowGap(contentRef.current))
+    // Through the library's setter, so its scroll handler does not take the move for the reader's.
+    // oxlint-disable-next-line react/immutability -- the library's state is its own mutable object; it writes it the same way.
+    state.scrollTop += move
   })
   useEffect(() => {
     const scroll = scrollRef.current
@@ -617,6 +627,7 @@ function TranscriptEntries() {
     if (element) {
       stopScroll()
       held.current = element
+      cover.current = 0
       hold()
     }
     setReveal(undefined)
