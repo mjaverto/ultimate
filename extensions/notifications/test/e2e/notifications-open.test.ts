@@ -1,8 +1,6 @@
-// "answer" on a question in To-dos opens the asker's conversation with the question's card at the top of the view. It
-// once left the view at the bottom: clearing the request re-ran the effect whose cleanup cancelled the reveal's frame.
-// The card must also land below the pinned prompt strip, which arrives after the jump, not at the top of the response
-// that asked, whose text comes first; a short question at the end needs room below it to get there. A link to a question,
-// `?conversation=<c>&message=<m>`, once opened the conversation at its end, leaving the question to look for.
+// Tapping a question's push while the app is open hands its link to the page through the service worker's
+// `notifications:open` message, which must open the asker's conversation with the question's card at the top of the
+// view below the pinned prompt strip, as the link would cold.
 import { join, resolve } from 'node:path'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux'
@@ -11,11 +9,11 @@ import type { ConversationId } from '@earendil-works/pi-durable'
 import { chromium } from 'playwright-core'
 import type { Page } from 'playwright-core'
 import { afterEach, expect, it } from 'vitest'
-import { browserBinary } from '../../extensions/browser/server.ts'
-import { Started } from '../../extensions/messages/addresses.ts'
-import { Messages } from '../../extensions/messages/api.ts'
-import { context } from '../../server/harness.ts'
-import { fauxServer, post, removeTemp, temp, until } from '../helpers.ts'
+import { browserBinary } from '../../../browser/server.ts'
+import { Started } from '../../../messages/addresses.ts'
+import { Messages } from '../../../messages/api.ts'
+import { context } from '../../../../server/harness.ts'
+import { fauxServer, post, removeTemp, temp, until } from '../../../../test/helpers.ts'
 
 const cleanup: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -27,7 +25,7 @@ const step = (n: number) =>
 
 /** A branch asking two questions between long answers, another conversation, and a browser. */
 async function setup() {
-  const home = await temp('ultimate-question-reveal-')
+  const home = await temp('ultimate-notifications-open-')
   cleanup.push(() => removeTemp(home))
   const server = await fauxServer({
     ultimateRoot: resolve('.'),
@@ -95,12 +93,6 @@ async function setup() {
     env: { ...process.env, TMPDIR: undefined },
   })
   cleanup.push(() => browser.close())
-  // A fresh dependency cache reloads the first page once Vite has optimized what the extensions import, which would
-  // take a link's place in the address: let it happen first.
-  const warm = await browser.newPage()
-  await warm.goto(server.url)
-  await warm.waitForEvent('load')
-  await warm.close()
   return { server, branch, other, asked, browser }
 }
 
@@ -123,29 +115,6 @@ async function drift(page: Page, id: number) {
   await page.waitForTimeout(500)
   return Math.abs((await gap(page, id)) - 8)
 }
-
-it('brings the question card to the top of the view below the pinned strip', async () => {
-  const { server, other, asked, browser } = await setup()
-  await post(server, '/api/ui', { set: { 'shell.panel': 'todos', 'shell.panelOpen': true } })
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
-  await page.goto(`${server.url}/?conversation=${other}`)
-  // From another conversation, then within the branch.
-  for (const { id } of asked) {
-    await page.locator(`[data-todo-question="${id}"] button`).click()
-    expect(await drift(page, id)).toBeLessThan(4)
-  }
-})
-
-it('opens a question link at the question, once', async () => {
-  const { server, branch, asked, browser } = await setup()
-  const [{ id }] = asked
-  // A phone, opened cold by the link: the page mounts the transcript after the overlay that reveals.
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
-  await page.goto(`${server.url}/?conversation=${branch}&message=${id}`)
-  expect(await drift(page, id)).toBeLessThan(4)
-  // A reload opens the conversation as usual.
-  expect(new URL(page.url()).search).toBe(`?conversation=${branch}`)
-})
 
 it("opens a tapped question's push at the question in the open app", async () => {
   const { server, branch, other, asked, browser } = await setup()

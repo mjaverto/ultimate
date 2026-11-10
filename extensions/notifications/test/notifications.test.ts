@@ -2,15 +2,11 @@ import { createECDH, createPublicKey, verify } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it } from 'vitest'
-import { forward, forwardSetting, ingest } from '../extensions/notifications/forward.ts'
-import { encrypt, publicKey, vapidToken } from '../extensions/notifications/push.ts'
-import {
-  landingNotification,
-  messageNotification,
-  rowNotification,
-} from '../extensions/notifications/rules.ts'
-import { writeSecret } from '../extensions/secrets/store.ts'
-import { temp } from './helpers.ts'
+import { forward, forwardSetting, ingest } from '../forward.ts'
+import { encrypt, publicKey, vapidToken } from '../push.ts'
+import { landingNotification, messageNotification, rowNotification } from '../rules.ts'
+import { writeSecret } from '../../secrets/store.ts'
+import { temp } from '../../../test/helpers.ts'
 
 it('reproduces the complete RFC 8291 Appendix A encrypted body byte for byte', () => {
   const encrypted = encrypt(
