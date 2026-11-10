@@ -418,6 +418,8 @@ export async function createApi(
     conversations() {
       return summaries
     },
+    /** Open browser tabs: each holds one event stream. */
+    pages: () => connections.size,
     async handle(request: IncomingMessage, response: ServerResponse) {
       const url = new URL(request.url ?? '/', 'http://localhost')
       if (!url.pathname.startsWith('/api/')) return false
@@ -534,9 +536,11 @@ export async function createApi(
           return true
         }
         if (url.pathname === '/api/restart') {
-          const error = await requestSwap(async (generation) => {
-            json(202, { ok: true, generation })
-          }, host.build())
+          const error =
+            (await extensions.prepared()) ??
+            (await requestSwap(async (generation) => {
+              json(202, { ok: true, generation })
+            }, host.build()))
           if (!response.writableEnded) json(500, { ok: false, error })
           return true
         }

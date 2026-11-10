@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context'
 import type { Context } from '@earendil-works/chord'
 import type { JsonValue } from '@earendil-works/chord'
-import { arr, bool, int, obj, oneOf, opt, str } from '@earendil-works/pi-schema'
+import { arr, bool, int, obj, opt, str } from '@earendil-works/pi-schema'
+import { strEnum } from '../../lib/schema.ts'
 import type { AssistantMessage, ModelThinkingLevel } from '@earendil-works/pi-ai'
 import {
   AgentDoc,
@@ -71,9 +72,17 @@ export const docs = [Subagents, Standing, Profile, Runs]
 const ADHOC = `You were made for one task: do what your brief asks, and only that. Read the code and the repository instructions it touches first. Never delegate or push. Report problems instead of working around them. Answer with conclusions and their evidence (\`path:line\`, commands with their output), not dumps; say what you could not confirm.`
 const WRITE_TOOLS = ['edit', 'write']
 
-/** Record how standing agent `definition`'s mark looks in conversations' marks doc, or that it asks for nothing. */
-const setMark = (marks: Record<string, AgentMarkStyle>, { name, icon, tint }: AgentDefinition) => {
-  if (icon || tint) marks[name] = { ...(icon ? { icon } : {}), ...(tint ? { tint } : {}) }
+/** Record standing agent `definition`'s title and how its mark looks in conversations' marks doc, or that it asks for nothing. */
+const setMark = (
+  marks: Record<string, AgentMarkStyle>,
+  { name, title, icon, tint }: AgentDefinition,
+) => {
+  if (title || icon || tint)
+    marks[name] = {
+      ...(title ? { title } : {}),
+      ...(icon ? { icon } : {}),
+      ...(tint ? { tint } : {}),
+    }
   else delete marks[name]
 }
 
@@ -505,6 +514,7 @@ export const actions = {
       ...(fast ? { fast } : {}),
       ...(!summaries ? { summaries } : {}),
       // The form has no control for these: a save keeps them as discovery read them.
+      ...(existing?.title ? { title: existing.title } : {}),
       ...(existing?.icon ? { icon: existing.icon } : {}),
       ...(existing?.tint ? { tint: existing.tint } : {}),
     }
@@ -656,6 +666,7 @@ export default function subagents(
             thinkingLevel: own.thinkingLevel ?? main.thinkingLevel,
           }
         } else {
+          // Created and indexed in one commit; a deleted standing conversation is recreated here.
           created = await tx.createConversation({ ownership: { kind: 'ownerless' } })
           id = created.id
           index[name] = id
@@ -835,7 +846,8 @@ export default function subagents(
   host.onOpen(async () => {
     await pruneRetired(BACKGROUND_CONTEXT)
     unsubscribe?.()
-    // Not a reactor: subagent answers settle as Pi submission records, not domain events.
+    // Not a reactor: subagent answers settle as Pi submission records, not domain events. Committed submissions are
+    // observed live here and scanned once on open, so a restart neither loses nor duplicates a report.
     unsubscribe = onCommit(host.harness(), (publication) => {
       for (const change of publication.changes) {
         if (change.type !== 'submission') continue
@@ -859,6 +871,8 @@ export default function subagents(
     hooks: [
       hook(GenerationTask, {
         afterTools: async (_assistant, results, api, context) => {
+          // A report a successful `subagent` or codemode result already returned is withdrawn from the queue. Failed or
+          // yielded scripts leave theirs queued, and a report the model already saw stays where it is.
           // Tool settlement is not a receipt. Only committed outer results may acknowledge.
           await host.harness().commit(async (tx) => {
             const answers = new Set<EntryId>()
@@ -960,7 +974,7 @@ export default function subagents(
         // Call-id receipts deduplicate starts/messages; memoized targets and guards protect stop/workspace replays.
         replay: 'safe',
         parameters: obj({
-          action: oneOf(['start', 'message', 'wait', 'stop', 'list', 'land', 'discard']),
+          action: strEnum(['start', 'message', 'wait', 'stop', 'list', 'land', 'discard']),
           agent: opt(
             str({
               description:
@@ -977,7 +991,7 @@ export default function subagents(
             str({ description: 'For start: the model family to run on (fast, review…).' }),
           ),
           model: opt(str({ description: 'For start: provider/modelId, instead of a family.' })),
-          thinking: opt(oneOf(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])),
+          thinking: opt(strEnum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])),
           tools: opt(
             arr(str(), {
               description:
@@ -996,7 +1010,7 @@ export default function subagents(
           id: opt(int({ minimum: 1 })),
           text: opt(str()),
           steer: opt(bool()),
-          isolate: opt(oneOf(['none', 'worktree'])),
+          isolate: opt(strEnum(['none', 'worktree'])),
         }),
         execute: async (args, api, context) => {
           const cached = await api.memo<ReturnType<typeof reply>>('result', context)
@@ -1065,6 +1079,11 @@ export default function subagents(
             const task = await api.getTask(api.taskId, context)
             // Pi upstream: @earendil-works/pi-durable@1.5.0 src/harness/tool.ts — internal ToolTaskInput.assistant locates the calling assistant. Drop when ToolExecutionApi exposes the calling assistant entry ID.
             const assistant = (task?.input as { assistant: EntryId } | undefined)?.assistant
+            // A fork copies the parent's visible history up to the entry before the calling assistant message. Documents
+            // follow their fork policy: `pi.agent`, `codemode.store` and `ultimate.ui` copy as of that entry (the web
+            // reads only the root's UI document, so the child's copy is inert); `ultimate.subagents`, `ultimate.metadata`,
+            // `models.login` and Pi's inbox, live state and usage start fresh. createChild then replaces the agent
+            // configuration with the current parent's plus the definition's.
             let forkAt: EntryId | undefined
             if (definition && args.fork) {
               const conversation = (await host.harness().conversation(api.conversationId, context))!

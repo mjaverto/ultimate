@@ -30,12 +30,12 @@ the scratch server from `docs/running.md` in the background instead, from the br
 
 ```bash
 H=$(mktemp -d /tmp/ultimate-smoke-XXXX)
-env $(env | grep -o '^ULTIMATE_[A-Z_]*' | sed 's/^/-u /') ULTIMATE_HOME=$H \
+env $(env | grep -o '^ULTIMATE_[A-Z_]*' | sed 's/^/-u /') ULTIMATE_HOME=$H ULTIMATE_USER_HOME=$H/user \
   pnpm start --port 4799 --no-open > $H.log 2>&1 &
 echo "supervisor pid $!"
 ```
 
-Unsetting every inherited `ULTIMATE_*` drops the live server's home and project. Wait until `$H.log` says
+Unsetting every inherited `ULTIMATE_*` drops the live server's home and project; the empty user home keeps the real user extensions in `~/.ultimate` out. Wait until `$H.log` says
 `supervisor: ready`. Do not set `PI_CLAUDE_CODE_CONFIG_DIR` or `CLAUDE_CONFIG_DIR` to `~/.claude`: Claude Code would
 write a stray `~/.claude/.claude.json` beside the real `~/.claude.json`.
 
@@ -75,7 +75,7 @@ trace also lists background calls such as titles and summaries on `summaryModel`
 
 ## Clean up
 
-- Preview: `instance stop`, and check `~/.ultimate/settings.json` no longer has your `instance` key.
+- Preview: `instance stop`, and check `~/.ultimate/settings.json` is back as it was (step 3).
 - Scratch server: `kill <supervisor pid>` (not `pkill -f`: the pattern matches your own shell), then
   `rm -rf $H $H.log`.
 
